@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vision Game — Letter Recognition</title>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --panel: #161a22;
+    --accent: #4fd1c5;
+    --accent2: #f6ad55;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; }
+
+  /* Sidebar with toggles */
+  #sidebar {
+    width: 300px;
+    flex-shrink: 0;
+    background: var(--panel);
+    padding: 24px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    overflow-y: auto;
+    border-right: 1px solid #232838;
+  }
+  #sidebar h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 0.5px; }
+  #sidebar .sub { font-size: 12px; color: var(--muted); margin-bottom: 8px; line-height: 1.5; }
+
+  .control { display: flex; flex-direction: column; gap: 6px; }
+  .control label { font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+  .control label .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  select {
+    width: 100%; padding: 9px 10px;
+    background: #11141b; color: var(--text);
+    border: 1px solid #2a3142; border-radius: 8px;
+    font-size: 14px; font-family: inherit; cursor: pointer;
+  }
+  select:focus { outline: none; border-color: var(--accent); }
+
+  .stat-box {
+    background: #11141b;
+    border: 1px solid #232838;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .stat-box .big { font-size: 26px; font-weight: 700; color: var(--accent2); font-variant-numeric: tabular-nums; }
+
+  button {
+    background: var(--accent);
+    color: #06251f;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: filter .15s, transform .05s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: translateY(1px); }
+  button.secondary { background: #2a3142; color: var(--text); }
+
+  /* Main stage */
+  #stage {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #canvas {
+    background: #000;
+    border-radius: 12px;
+    box-shadow: 0 0 60px rgba(0,0,0,0.6) inset, 0 10px 40px rgba(0,0,0,0.5);
+  }
+
+  /* Overlays */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: rgba(13,15,20,0.82);
+    backdrop-filter: blur(4px);
+    text-align: center;
+    padding: 30px;
+    z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h2 { font-size: 32px; margin: 0; }
+  .overlay p { color: var(--muted); max-width: 460px; line-height: 1.6; margin: 0; }
+  kbd {
+    background: #2a3142; border-radius: 6px; padding: 2px 8px;
+    font-family: inherit; border: 1px solid #3a4257; font-size: 0.9em;
+  }
+
+  /* Guess input row */
+  #guessRow { display: flex; gap: 10px; align-items: center; }
+  #guessInput {
+    width: 90px; height: 90px;
+    font-size: 52px; text-align: center; text-transform: uppercase;
+    background: #11141b; color: var(--text);
+    border: 2px solid var(--accent); border-radius: 14px;
+    outline: none; font-weight: 700;
+  }
+  .feedback { font-size: 20px; font-weight: 700; min-height: 26px; }
+  .feedback.good { color: var(--accent); }
+  .feedback.bad { color: #fc8181; }
+
+  .hud {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 24px; font-size: 14px; color: var(--muted);
+    background: rgba(22,26,34,0.7); padding: 8px 18px; border-radius: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud b { color: var(--text); }
+  .pixhint { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div>
+      <h1>👁 Vision Game</h1>
+      <div class="sub">A letter appears one pixel at a time. Hit <kbd>Space</kbd> the moment you recognize it, then type which letter you saw. Fewer pixels = higher score.</div>
+    </div>
+
+    <div class="control">
+      <label>Reveal speed <span class="val" id="speedVal"></span></label>
+      <input type="range" id="speed" min="2" max="600" value="40" step="1">
+    </div>
+
+    <div class="control">
+      <label>Blur amount <span class="val" id="blurVal"></span></label>
+      <input type="range" id="blur" min="0" max="20" value="4" step="0.5">
+    </div>
+
+    <div class="control">
+      <label>Letter size <span class="val" id="sizeVal"></span></label>
+      <input type="range" id="size" min="40" max="280" value="140">
+    </div>
+
+    <div class="control">
+      <label>Letter case</label>
+      <select id="caseMode">
+        <option value="upper">UPPERCASE (A–Z)</option>
+        <option value="lower">lowercase (a–z)</option>
+        <option value="mix" selected>Mixed (both)</option>
+      </select>
+    </div>
+
+    <div class="control">
+      <label>Order</label>
+      <select id="orderMode">
+        <option value="random">Random (shuffled)</option>
+        <option value="sequential">Sequential (A → Z)</option>
+      </select>
+    </div>
+
+    <div class="stat-box">
+      <span>Total score</span>
+      <span class="big" id="totalScore">0</span>
+    </div>
+    <div class="stat-box">
+      <span>Progress</span>
+      <span id="progress">0 / 26</span>
+    </div>
+
+    <button id="startBtn">Start game</button>
+    <button id="resetBtn" class="secondary">Reset</button>
+  </aside>
+
+  <main id="stage">
+    <canvas id="canvas"></canvas>
+
+    <div class="hud" id="hud" style="display:none">
+      <span>Letter <b id="hudIndex">1</b>/26</span>
+      <span>Score <b id="hudScore">0</b></span>
+    </div>
+    <div class="pixhint" id="pixhint" style="display:none"></div>
+
+    <!-- Start overlay -->
+    <div class="overlay" id="startOverlay">
+      <h2>Ready?</h2>
+      <p>All 26 letters in random order. Each fades in pixel-by-pixel through the blur. Press <kbd>Space</kbd> as soon as you can read it — then type it. The earlier you guess (fewer pixels), the more points.</p>
+      <button id="startBtn2">Start game</button>
+    </div>
+
+    <!-- Guess overlay -->
+    <div class="overlay hidden" id="guessOverlay">
+      <h2>What letter?</h2>
+      <div id="guessRow">
+        <input id="guessInput" maxlength="1" autocomplete="off" spellcheck="false">
+      </div>
+      <p>Type the letter and press <kbd>Enter</kbd>.</p>
+    </div>
+
+    <!-- Result overlay (per round) -->
+    <div class="overlay hidden" id="resultOverlay">
+      <div class="feedback" id="resultFeedback"></div>
+      <p id="resultDetail"></p>
+      <button id="nextBtn">Next letter →</button>
+    </div>
+
+    <!-- End overlay -->
+    <div class="overlay hidden" id="endOverlay">
+      <h2>Game over</h2>
+      <p id="endDetail"></p>
+      <button id="playAgainBtn">Play again</button>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+  // DOM
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const speedEl = document.getElementById("speed");
+  const caseModeEl = document.getElementById("caseMode");
+  const orderModeEl = document.getElementById("orderMode");
+  const blurEl = document.getElementById("blur");
+  const sizeEl = document.getElementById("size");
+  const speedVal = document.getElementById("speedVal");
+  const blurVal = document.getElementById("blurVal");
+  const sizeVal = document.getElementById("sizeVal");
+  const totalScoreEl = document.getElementById("totalScore");
+  const progressEl = document.getElementById("progress");
+  const hud = document.getElementById("hud");
+  const hudIndex = document.getElementById("hudIndex");
+  const hudScore = document.getElementById("hudScore");
+  const pixhint = document.getElementById("pixhint");
+
+  const startOverlay = document.getElementById("startOverlay");
+  const guessOverlay = document.getElementById("guessOverlay");
+  const resultOverlay = document.getElementById("resultOverlay");
+  const endOverlay = document.getElementById("endOverlay");
+  const guessInput = document.getElementById("guessInput");
+  const resultFeedback = document.getElementById("resultFeedback");
+  const resultDetail = document.getElementById("resultDetail");
+  const endDetail = document.getElementById("endDetail");
+
+  // Canvas sizing — fixed logical resolution, scaled to viewport
+  const W = 700, H = 700;
+  canvas.width = W;
+  canvas.height = H;
+  function fitCanvas() {
+    const stage = document.getElementById("stage");
+    const avail = Math.min(stage.clientWidth, stage.clientHeight) - 40;
+    const s = Math.max(200, Math.min(avail, 820));
+    canvas.style.width = s + "px";
+    canvas.style.height = s + "px";
+  }
+  window.addEventListener("resize", fitCanvas);
+
+  // Game state
+  let deck = [];          // shuffled letters for this game
+  let roundIdx = -1;      // index into deck
+  let totalScore = 0;
+  let phase = "idle";     // idle | revealing | guessing | result | done
+
+  // Per-round reveal state
+  let pixels = [];        // shuffled list of {x,y} that make up the letter
+  let revealed = 0;       // how many pixels drawn so far
+  let imgData = null;     // ImageData we paint into
+  let accumulator = 0;    // fractional pixels for smooth speed control
+  let lastTs = 0;
+  let rafId = null;
+  let currentLetter = "";
+  let guessLockedAt = 0;  // pixels revealed when spacebar pressed
+
+  // ---- Controls display ----
+  function refreshLabels() {
+    speedVal.textContent = speedEl.value + " px/sec";
+    blurVal.textContent = parseFloat(blurEl.value).toFixed(1) + " px";
+    sizeVal.textContent = sizeEl.value + " px";
+  }
+  [speedEl, blurEl, sizeEl].forEach(el => el.addEventListener("input", () => {
+    refreshLabels();
+    // Live-apply blur during a round
+    if (phase === "revealing" || phase === "guessing") applyBlur();
+  }));
+  function applyBlur() {
+    canvas.style.filter = `blur(${blurEl.value}px)`;
+  }
+
+  // ---- Build pixel list for a letter ----
+  function buildLetter(letter) {
+    const fontSize = parseInt(sizeEl.value, 10);
+    // Render letter to a temp canvas to discover its pixels
+    const tmp = document.createElement("canvas");
+    tmp.width = W; tmp.height = H;
+    const tctx = tmp.getContext("2d");
+    tctx.fillStyle = "#000";
+    tctx.fillRect(0, 0, W, H);
+    tctx.fillStyle = "#fff";
+    tctx.font = `700 ${fontSize}px Arial, sans-serif`;
+    tctx.textAlign = "center";
+    tctx.textBaseline = "middle";
+    tctx.fillText(letter, W / 2, H / 2);
+
+    const data = tctx.getImageData(0, 0, W, H).data;
+    const pts = [];
+    // Sample every pixel; collect those that are sufficiently lit
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        if (data[i] > 100) pts.push((y * W + x)); // store flat index
+      }
+    }
+    shuffle(pts);
+    return pts;
+  }
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // ---- Round lifecycle ----
+  function buildDeck() {
+    const caseMode = caseModeEl.value;   // upper | lower | mix
+    const orderMode = orderModeEl.value; // random | sequential
+    // Base sequence A→Z, with each glyph cased per the chosen mode.
+    let glyphs = ALPHABET.map(ch => {
+      if (caseMode === "lower") return ch.toLowerCase();
+      if (caseMode === "mix") return Math.random() < 0.5 ? ch : ch.toLowerCase();
+      return ch; // upper
+    });
+    if (orderMode === "random") shuffle(glyphs);
+    return glyphs;
+  }
+
+  function startGame() {
+    deck = buildDeck();
+    roundIdx = -1;
+    totalScore = 0;
+    totalScoreEl.textContent = "0";
+    hudScore.textContent = "0";
+    hud.style.display = "flex";
+    hideAllOverlays();
+    nextRound();
+  }
+
+  function nextRound() {
+    roundIdx++;
+    progressEl.textContent = `${roundIdx} / 26`;
+    if (roundIdx >= deck.length) { endGame(); return; }
+
+    currentLetter = deck[roundIdx];
+    pixels = buildLetter(currentLetter);
+    revealed = 0;
+    accumulator = 0;
+    guessLockedAt = 0;
+
+    // fresh black frame
+    imgData = ctx.createImageData(W, H);
+    const d = imgData.data;
+    for (let i = 3; i < d.length; i += 4) d[i] = 255; // opaque black
+    ctx.putImageData(imgData, 0, 0);
+
+    applyBlur();
+    hudIndex.textContent = (roundIdx + 1);
+    pixhint.style.display = "block";
+    updatePixHint();
+
+    phase = "revealing";
+    lastTs = 0;
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function updatePixHint() {
+    const pct = pixels.length ? Math.round(revealed / pixels.length * 100) : 0;
+    pixhint.textContent = `${revealed} / ${pixels.length} pixels (${pct}%) — press SPACE when you can read it`;
+  }
+
+  function loop(ts) {
+    if (phase !== "revealing") return;
+    if (!lastTs) lastTs = ts;
+    let dt = (ts - lastTs) / 1000;        // seconds since last frame
+    lastTs = ts;
+    if (dt > 0.25) dt = 0.25;             // clamp after tab/lag stalls
+
+    const perSec = parseFloat(speedEl.value); // pixels per SECOND (refresh-rate independent)
+    accumulator += perSec * dt;
+    let toAdd = Math.floor(accumulator);
+    accumulator -= toAdd;
+
+    const d = imgData.data;
+    let drew = false;
+    while (toAdd > 0 && revealed < pixels.length) {
+      const flat = pixels[revealed];
+      const i = flat * 4;
+      d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; d[i + 3] = 255;
+      revealed++;
+      toAdd--;
+      drew = true;
+    }
+    if (drew) {
+      ctx.putImageData(imgData, 0, 0);
+      updatePixHint();
+    }
+
+    if (revealed >= pixels.length) {
+      // Fully revealed and still no guess — force the guess step
+      promptGuess();
+      return;
+    }
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function promptGuess() {
+    if (phase !== "revealing") return;
+    phase = "guessing";
+    cancelAnimationFrame(rafId);
+    guessLockedAt = revealed; // freeze how many pixels were shown
+    guessInput.value = "";
+    guessOverlay.classList.remove("hidden");
+    // focus after overlay shows
+    setTimeout(() => guessInput.focus(), 30);
+  }
+
+  function submitGuess() {
+    if (phase !== "guessing") return;
+    const raw = (guessInput.value || "").trim().toUpperCase();
+    if (!/^[A-Z]$/.test(raw)) { guessInput.focus(); return; }
+
+    const correct = raw === currentLetter.toUpperCase(); // case-insensitive match
+    const total = pixels.length || 1;
+    const fraction = guessLockedAt / total; // 0 = guessed instantly
+    let roundScore = 0;
+    if (correct) {
+      // Fewer pixels => higher score. Max 1000 per letter.
+      roundScore = Math.max(50, Math.round((1 - fraction) * 1000));
+    }
+    totalScore += roundScore;
+    totalScoreEl.textContent = totalScore;
+    hudScore.textContent = totalScore;
+
+    guessOverlay.classList.add("hidden");
+    phase = "result";
+
+    const pct = Math.round(fraction * 100);
+    if (correct) {
+      resultFeedback.textContent = `✓ Correct — "${currentLetter}"`;
+      resultFeedback.className = "feedback good";
+      resultDetail.textContent =
+        `Recognized at ${guessLockedAt} / ${total} pixels (${pct}%).  +${roundScore} points.`;
+    } else {
+      resultFeedback.textContent = `✗ It was "${currentLetter}"`;
+      resultFeedback.className = "feedback bad";
+      resultDetail.textContent =
+        `You guessed "${raw}". No points this round.`;
+    }
+    // Reveal the full letter behind the overlay
+    revealFull();
+    resultOverlay.classList.remove("hidden");
+    document.getElementById("nextBtn").focus();
+  }
+
+  function revealFull() {
+    const d = imgData.data;
+    for (const flat of pixels) {
+      const i = flat * 4;
+      d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; d[i + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    canvas.style.filter = "blur(0px)";
+  }
+
+  function endGame() {
+    phase = "done";
+    hud.style.display = "flex";
+    pixhint.style.display = "none";
+    hideAllOverlays();
+    const maxPossible = 26 * 1000;
+    endDetail.textContent =
+      `You scored ${totalScore} points out of a possible ${maxPossible}. ` +
+      `That's an average of ${Math.round(totalScore / 26)} per letter.`;
+    endOverlay.classList.remove("hidden");
+    progressEl.textContent = "26 / 26";
+  }
+
+  function resetGame() {
+    cancelAnimationFrame(rafId);
+    phase = "idle";
+    totalScore = 0;
+    roundIdx = -1;
+    totalScoreEl.textContent = "0";
+    hudScore.textContent = "0";
+    progressEl.textContent = "0 / 26";
+    hud.style.display = "none";
+    pixhint.style.display = "none";
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, W, H);
+    canvas.style.filter = "blur(0px)";
+    hideAllOverlays();
+    startOverlay.classList.remove("hidden");
+  }
+
+  function hideAllOverlays() {
+    [startOverlay, guessOverlay, resultOverlay, endOverlay]
+      .forEach(o => o.classList.add("hidden"));
+  }
+
+  // ---- Input handling ----
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      // Only meaningful while revealing
+      if (phase === "revealing") {
+        e.preventDefault();
+        promptGuess();
+      } else if (phase !== "guessing") {
+        // avoid page scroll when space used elsewhere on stage
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      if (phase === "guessing") { e.preventDefault(); submitGuess(); }
+      else if (phase === "result") { e.preventDefault(); proceed(); }
+      else if (phase === "done") { e.preventDefault(); startGame(); }
+    }
+  });
+
+  guessInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); submitGuess(); }
+  });
+
+  function proceed() {
+    resultOverlay.classList.add("hidden");
+    nextRound();
+  }
+
+  // Buttons
+  document.getElementById("startBtn").addEventListener("click", startGame);
+  document.getElementById("startBtn2").addEventListener("click", startGame);
+  document.getElementById("resetBtn").addEventListener("click", resetGame);
+  document.getElementById("nextBtn").addEventListener("click", proceed);
+  document.getElementById("playAgainBtn").addEventListener("click", startGame);
+
+  // Init
+  refreshLabels();
+  fitCanvas();
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+})();
+</script>
+</body>
+</html>
